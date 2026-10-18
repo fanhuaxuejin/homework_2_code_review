@@ -14,9 +14,9 @@ from pathlib import Path
 
 # 允许以 `python main.py` 直接运行
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from agent.core import CodeExplainAgent
-from agent.prompts import WELCOME
+from agent.core import Agent
+from agent.roles import ROLES,AgentRole, get_role, register_role
+from agent.prompts import WELCOME,build_system_prompt
 from config import describe, load_settings
 from tools import invoke as invoke_tool
 from tools.loader import load_all
@@ -96,7 +96,7 @@ class EventRenderer:
 
 
 # --------------------------------------------------------------- 交互模式
-def interactive(agent: CodeExplainAgent, renderer: EventRenderer) -> int:
+def interactive(agent: Agent, renderer: EventRenderer) -> int:
     settings = agent.settings
     print(colorize("=" * 68, "dim"))
     print(colorize("  代码解释 Agent  ·  Code Explanation Agent", "bold"))
@@ -194,7 +194,7 @@ def interactive(agent: CodeExplainAgent, renderer: EventRenderer) -> int:
 
 
 # --------------------------------------------------------------- 自检
-def self_check(settings, agent: CodeExplainAgent) -> int:
+def self_check(settings, agent: Agent) -> int:
     """离线自检：不需要 API Key 也能验证环境是否正确。"""
     print(colorize("环境自检", "bold"))
     print(f"  {describe(settings)}")
@@ -227,6 +227,35 @@ def self_check(settings, agent: CodeExplainAgent) -> int:
 
 
 # --------------------------------------------------------------- 主函数
+EXPLAINER_ROLE = "explainer"
+
+def ensure_explainer_role(settings, max_steps: int) -> None:
+    """注册 explainer 角色。必须在这里注册，因为 prompt 依赖真实工作目录。
+
+    ★ 幂等保护：main() 可能被调用两次（测试、REPL），而 register_role
+      对重名是直接抛错的。已经注册过就只更新 max_steps。
+    """
+    prompt = build_system_prompt(settings.workspace)
+    tools = ("list_dir", "list_symbols", "read_code",
+             "search_code", "run_python", "write_report")
+    if EXPLAINER_ROLE in ROLES:
+        existing = ROLES[EXPLAINER_ROLE]
+        if existing.prompt == prompt and existing.max_steps == max_steps:
+            return
+        ROLES[EXPLAINER_ROLE] = AgentRole(
+            key=EXPLAINER_ROLE, title=existing.title, prompt=prompt,
+            allowed_tools=existing.allowed_tools,
+            temperature=existing.temperature, max_steps=max_steps,
+        )
+        return
+    register_role(AgentRole(
+        key=EXPLAINER_ROLE,
+        title="代码解释助手",
+        prompt=prompt,
+        allowed_tools=tools,
+        temperature=0.2,
+        max_steps=max_steps,
+    ))
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="code-agent",
@@ -264,15 +293,14 @@ def main(argv: list[str] | None = None) -> int:
 
     load_all()
     renderer = EventRenderer(verbose=args.verbose)
-
-    # --no-persist 时不落盘
-    if args.no_persist:
-        settings_workspace = settings.workspace
-        agent = CodeExplainAgent(settings, max_steps=max(1, args.max_steps), on_event=renderer)
-        agent.memory.store_dir = None
-    else:
-        agent = CodeExplainAgent(settings, max_steps=max(1, args.max_steps), on_event=renderer)
-
+    steps = max(1, args.max_steps)
+    ensure_explainer_role(settings, steps)
+    agent = Agent(
+        settings,
+        get_role(EXPLAINER_ROLE),
+        on_event=renderer,
+        persist_memory=not args.no_persist,
+    )
     if args.check:
         return self_check(settings, agent)
 

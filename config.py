@@ -39,6 +39,10 @@ class Settings:
     thinking:bool
     dotenv_loaded:bool
     run_python_timeout: int = 10
+    review_max_steps:int = 14
+    fix_max_steps: int = 10
+    max_fix_rounds: int = 2
+    node_retries: int = 2
 
     @property
     def has_api_key(self)->bool:
@@ -87,5 +91,6 @@ def describe(s: Settings) -> str:
     return (
         f"provider={s.provider.name} | model={s.model} | "
         f"thinking={'on' if s.thinking else 'off'} | "
-        f"api_key={'已配置' if s.has_api_key else '缺失'}"
+        f"api_key={'已配置' if s.has_api_key else '缺失'} | "
+        f"workspace={s.workspace}"
     )

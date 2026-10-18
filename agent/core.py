@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from agent.llm import LLMClient, LLMError
-from agent.prompts import build_system_prompt
+from agent.roles import AgentRole
 from config import Settings
 from tools import invoke as invoke_tool
 from tools.loader import schemas as load_tool_schemas
@@ -32,28 +32,24 @@ class AgentResult:
     error: str | None = None
 
 
-class CodeExplainAgent:
-    """代码解释 Agent。
-    与 CLI 解耦：CLI 只负责把事件打印出来，Agent 自己不知道"终端"的存在。
-    """
+class Agent:
 
     def __init__(
         self,
         settings: Settings,
+        role: AgentRole,
         *,
-        max_steps: int = DEFAULT_MAX_STEPS,
         on_event: EventCallback | None = None,
+        persist_memory:bool=False,
     ) -> None:
         self.settings = settings
-        self.max_steps = max_steps
+        self.role=role
+        self.max_steps = role.max_steps
         self.on_event = on_event or (lambda _event: None)
         self.client = LLMClient(settings)
-        self.tools = load_tool_schemas()
-        store_dir = settings.workspace / ".agent_memory"
-        self.memory = ConversationMemory(
-            build_system_prompt(settings.workspace),
-            store_dir=store_dir,
-        )
+        self.tools = load_tool_schemas(role.allowed_tools)
+        store_dir = (settings.workspace / ".agent_memory") if persist_memory else None
+        self.memory = ConversationMemory(role.prompt, store_dir=store_dir)
 
     # ------------------------------------------------------------- 对外接口
     def ask(self, question: str) -> AgentResult:
@@ -72,7 +68,7 @@ class CodeExplainAgent:
 
                 self._emit("step", step=step, max_steps=self.max_steps, text="正在推理…")
 
-                reply = self.client.chat(self.memory.messages, self.tools)
+                reply = self.client.chat(self.memory.messages, self.tools,temperature=self.role.temperature,)
 
                 # ---- 分支 A：模型要调工具
                 if reply.wants_tools:

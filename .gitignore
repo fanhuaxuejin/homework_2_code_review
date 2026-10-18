@@ -27,3 +27,6 @@ reports/
 .idea/
 .DS_Store
 Thumbs.db
+
+#测试文件
+experiment.py
