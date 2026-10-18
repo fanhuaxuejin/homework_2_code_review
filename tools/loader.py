@@ -1,6 +1,7 @@
 from typing import Any
 
 _LOADED: set[str] = set()
+check=False
 
 _MODULES = {
     "list_dir": "tools.list_dir",
@@ -9,10 +10,12 @@ _MODULES = {
     "search_code": "tools.search_code",
     "run_python": "tools.run_python",
     "write_report": "tools.write_report",
+    "write_code": "tools.write_code",
 }
 
 def load_all(allowed:tuple[str,]|None=None) -> None:
     """导入全部工具模块（幂等）。"""
+    global check
     targets = _MODULES if allowed is None else {
         k: v for k, v in _MODULES.items() if k in allowed
     }
@@ -21,7 +24,10 @@ def load_all(allowed:tuple[str,]|None=None) -> None:
             continue
         __import__(module_path)
         _LOADED.add(name)
+    check=True
 
+def checked()->bool:
+    return check
 
 def schemas(allowed:tuple[str,]|None=None) -> list[dict[str, Any]]:
     """返回所有已注册工具的 schema。"""

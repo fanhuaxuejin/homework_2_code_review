@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from tools.loader import checked, load_all
 
 _REGISTRY: dict[str, "Tool"] = {}
 
@@ -35,15 +36,12 @@ def register(schema: dict[str, Any]) -> Callable[[Callable[..., str]], Callable[
         return handler
     return decorator
 
-
 def all_schemas() -> list[dict[str, Any]]:
     """返回全部工具 schema，直接喂给 LLM 的 tools 参数。"""
     return [t.schema for t in _REGISTRY.values()]
 
-
 def get(name: str) -> Tool | None:
     return _REGISTRY.get(name)
-
 
 def invoke(name: str, arguments: dict[str, Any]) -> str:
     """按名字执行工具。
@@ -52,8 +50,17 @@ def invoke(name: str, arguments: dict[str, Any]) -> str:
     工具参数是模型生成的字符串，出错是常态。抛异常会直接打断 Agent 循环，
     返回文本则让模型有机会换个参数重试。
     """
+
+    if not checked():
+        load_all()
+
     tool = _REGISTRY.get(name)
     if tool is None:
+        if not _REGISTRY:
+            return (
+                "[错误] 工具注册表为空 —— 这不是『工具不存在』，"
+                "而是从未加载过任何工具模块。请先调用 tools.loader.load_all()。"
+            )
         available = ", ".join(sorted(_REGISTRY)) or "（无）"
         return f"[错误] 不存在名为 {name!r} 的工具。可用工具：{available}"
 
@@ -68,10 +75,8 @@ def invoke(name: str, arguments: dict[str, Any]) -> str:
 
     return result if isinstance(result, str) else str(result)
 
-
 class UnsafePathError(ValueError):
     """请求的路径越出了允许访问的工作目录。"""
-
 
 def resolve_workspace_path(raw: str, workspace: Path) -> Path:
     """把模型给的路径解析为绝对路径，并校验未越权。

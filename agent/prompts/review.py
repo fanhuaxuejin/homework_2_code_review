@@ -3,6 +3,8 @@ from agent.prompts.base import (
 )
 
 REVIEW_OUTPUT_SPEC = """\
+下面 JSON 里的路径与行号只是**格式示例**，请替换成你实际审查的文件与行号。
+
 只输出**一个** ```json 代码块，块外不要写任何解释文字。JSON 结构：
 
 ```json
@@ -10,7 +12,7 @@ REVIEW_OUTPUT_SPEC = """\
   "summary": "一句话总评，含主要风险",
   "issues": [
     {
-      "file": "samples/buggy.py",
+      "file": "<目标文件的相对路径，例如 demo/xxx.py>",
       "line_start": 42,
       "line_end": 45,
       "line_verified": true,

@@ -21,6 +21,7 @@ reports/
 .agent_memory/
 .agent_tmp/
 *.log
+patched/
 
 # 编辑器 / 系统
 .vscode/
@@ -30,3 +31,4 @@ Thumbs.db
 
 #测试文件
 experiment.py
+tests/
