@@ -10,7 +10,7 @@ from workflow.state import VALID_CATEGORIES, VALID_SEVERITIES, Issue
 _SKIP_DIRS = {
     ".git", ".venv", "venv", "env", "__pycache__", "node_modules",
     ".pytest_cache", ".ruff_cache", ".mypy_cache", ".idea", ".vscode",
-    "runs", "patched", ".agent_memory", ".deps", ".piptmp",
+    "runs",".agent_memory", ".deps", ".piptmp",
 }
 
 # 参与行号校验的源码后缀

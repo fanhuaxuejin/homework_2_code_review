@@ -65,11 +65,13 @@ class WorkflowState:
     issues: list[Issue] = field(default_factory=list)
     original_issues: list[Issue] = field(default_factory=list)   # 第一轮的原始发现
     fixed_files: list[str] = field(default_factory=list)         # 产出的补丁路径
+    patches: dict[str, str] = field(default_factory=dict)
     fix_round: int = 0
 
     # 流程控制
     current_node: str = "start"
     history: list[NodeRecord] = field(default_factory=list)
+    max_fix_rounds: int = 2                                      # 熔断阈值
 
     # 输出
     unresolved: list[Issue] = field(default_factory=list)
@@ -83,6 +85,10 @@ class WorkflowState:
     def has_blocking(self) -> bool:
         """还有没有必须修的blocker / major"""
         return any(i.is_blocking() for i in self.open_issues())
+
+    def unresolved_count(self) -> int:
+        """未解决总数"""
+        return sum(1 for i in self.issues if i.status in ("open", "unresolved"))
 
     def open_count(self) -> int:
         return len(self.open_issues())
@@ -118,10 +124,13 @@ class WorkflowState:
             "fix_round": self.fix_round,
             "issue_count": len(self.issues),
             "open_count": self.open_count(),
+            "unresolved_count": self.unresolved_count(),
             "blocking": self.has_blocking(),
             "fixed_files": self.fixed_files,
             "history": [asdict(r) for r in self.history],
-            "issues": [asdict(i) for i in self.issues],
+            "issues": [ asdict(i) for i in self.issues],
+            "patches": self.patches,
+            "max_fix_rounds": self.max_fix_rounds,
         }
 
     def summary(self) -> str:
@@ -130,8 +139,8 @@ class WorkflowState:
         bad = sum(1 for r in self.history if r.status == "failed")
         return (
             f"节点 {len(self.history)} 个（成功 {ok} / 失败 {bad}）| "
-            f"问题 {len(self.issues)} 条（未解决 {self.open_count()}）| "
-            f"修复轮次 {self.fix_round}"
+            f"问题 {len(self.issues)} 条（未解决 {self.unresolved_count()}）| "
+            f"修复轮次 {self.fix_round}/{self.max_fix_rounds}"
         )
 
 def new_run_id() -> str:
