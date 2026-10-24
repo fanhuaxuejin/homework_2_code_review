@@ -15,12 +15,13 @@ MAX_HOPS = 20          # 最多循环 20 次
 
 class WorkflowEngine:
     def __init__(self, settings, *, entry: str = "review",
-                 runs_root: Path | None = None) -> None:
+                 runs_root: Path | None = None,on_event=None) -> None:
         self.settings = settings
         self.entry = build_workflow(entry)
         self.runs_root = runs_root or (settings.workspace / "runs")
         self._agents: dict[str, Agent] = {}
         self._logger: RunLogger | None = None
+        self._on_event=on_event
 
     # Agent 管理
     def _agent(self, role_key: str) -> Agent:
@@ -29,11 +30,23 @@ class WorkflowEngine:
             role = get_role(role_key)
             self._agents[role_key] = Agent(
                 self.settings, role,
-                on_event=lambda e: (self._logger.agent_event(e)
-                                    if self._logger else None),
+                on_event=self._emit_agent_event,
             )
         return self._agents[role_key]
 
+    def _emit_agent_event(self, event: dict) -> None:
+        """一路进日志，一路进终端渲染。"""
+        if self._logger is not None:
+            self._logger.agent_event(event)
+        self._emit_ui(event)
+
+    def _emit_ui(self, event: dict) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(event)
+        except Exception:  # noqa: BLE001
+            pass
     # 主循环
     def run(self, targets: list[str]) -> WorkflowState:
         run_id = new_run_id()
@@ -79,12 +92,17 @@ class WorkflowEngine:
             started_at = datetime.now().strftime("%H:%M:%S")
             t0 = time.time()
             self._logger.node_start(node.key, attempt)
+            self._emit_ui({"type": "node_start", "node": node.key,
+                           "title": node.title, "attempt": attempt})
             try:
                 note = node.run(state, rt) or ""
             except Exception as exc:
                 elapsed = time.time() - t0
                 err = f"{type(exc).__name__}: {exc}"
                 self._logger.node_end(node.key, "failed", elapsed, error=err)
+                self._emit_ui({"type": "node_end", "node": node.key,
+                               "status": "failed", "elapsed": elapsed,
+                               "error": err})
                 if attempt < self.settings.node_retries:
                     time.sleep(2 ** attempt)           # 重试
                     continue
@@ -95,6 +113,9 @@ class WorkflowEngine:
             else:
                 elapsed = time.time() - t0
                 self._logger.node_end(node.key, "ok", elapsed, note=note)
+                self._emit_ui({"type": "node_end", "node": node.key,
+                               "status": "ok", "elapsed": elapsed,
+                               "note": note})
                 state.record(node.key, "ok", started_at, elapsed,
                              attempts=attempt, note=note)
                 return
