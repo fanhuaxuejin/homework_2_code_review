@@ -39,7 +39,7 @@ class WorkflowEngine:
         run_id = new_run_id()
         run_dir = self.runs_root / run_id
         self._logger = RunLogger(run_dir)
-        rt = Runtime(self.settings, self._agent, run_dir)
+        rt = Runtime(self.settings, self._agent, run_dir,self._logger)
 
         state = WorkflowState(
             run_id=run_id,

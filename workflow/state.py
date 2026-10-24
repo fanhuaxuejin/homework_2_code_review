@@ -27,6 +27,7 @@ class Issue:
     suggestion: str = ""
     line_verified: bool = False
     status: str = "open"    # open | fixed | unresolved | wontfix
+    verify_note:str = ""
 
     def key(self) -> str:
         """跨轮次匹配同一问题"""

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from agent.core import Agent
-from agent.parsing import parse_issues
+from agent.parsing import parse_issues, parse_verdicts
 from workflow.state import Issue, WorkflowState
 
 RunFn = Callable[[WorkflowState, "Runtime"], str]
@@ -43,11 +43,23 @@ def get_node(key: str) -> Node:
 class Runtime:
     """运行时提供Agent获取、补丁目录、失败记录。"""
 
-    def __init__(self, settings, agent_factory, run_dir: Path) -> None:
+    def __init__(self, settings, agent_factory, run_dir: Path,logger=None) -> None:
         self.settings = settings
         self.agent_factory = agent_factory
         self.run_dir = run_dir
         self.read_files: set[str] = set()
+
+        if logger is None:
+            class _NullLogger:
+                def write(self, *a, **k): pass
+                def snapshot(self, *a, **k): pass
+                def dump_issues(self, *a, **k): pass
+                def node_start(self, *a, **k): pass
+                def node_end(self, *a, **k): pass
+                def agent_event(self, *a, **k): pass
+                def close(self): pass
+            logger = _NullLogger()
+        self.logger = logger
 
     def agent(self, role_key: str):
         return self.agent_factory(role_key)
@@ -147,24 +159,40 @@ def run_verify(state: WorkflowState, rt: Runtime) -> str:
     agent = rt.agent("reviewer_verify")
     confirmed = 0
     reopened = 0
+    unjudged = 0
 
     for source, patched in state.patches.items():
         result = agent.ask(_task_verify(patched, source, state))
         if result.error:
             continue
         new_issues, _ = parse_issues(result.answer, rt.settings.workspace)
-
+        verdicts = parse_verdicts(result.answer)
         for issue in state.issues:
             if issue.file != source or issue.status != "fixed":
                 continue
+            if issue.id in verdicts:
+                resolved, evidence = verdicts[issue.id]
+                issue.verify_note = evidence
+                if resolved:
+                    confirmed += 1
+                else:
+                    issue.status = "open"
+                    reopened += 1
+                continue
+            unjudged += 1
             if _still_present(issue, new_issues):
                 issue.status = "open"        # 修了但没修好，退回下一轮
                 reopened += 1
             else:
                 confirmed += 1
-
-    return (f"复审 {len(state.patches)} 个补丁：确认修好 {confirmed} 条，"
-            f"仍遗留 {reopened} 条")
+        rt.logger.write("verify_verdicts", source=source, patched=patched,
+                        verdicts={k: {"resolved": v[0], "evidence": v[1][:200]}
+                                  for k, v in verdicts.items()})
+    note = (f"复审 {len(state.patches)} 个补丁：本轮确认 {confirmed} 条，"
+            f"本轮遗留 {reopened} 条")
+    if unjudged:
+        note += f"（{unjudged} 条模型未给判定，用启发式兜底）"
+    return note
 
 
 def run_publish(state: WorkflowState, rt: Runtime) -> str:
@@ -212,8 +240,8 @@ def run_publish(state: WorkflowState, rt: Runtime) -> str:
         for i in state.unresolved:
             lines.append(f"- **{i.title}**（{i.file}:{i.line_start}，{i.severity}）")
             lines.append(f"  - 原因：{i.reason}")
-            if i.suggestion:
-                lines.append(f"  - 建议：{i.suggestion}")
+            if i.verify_note:
+                lines.append(f"  - **复审判定**：{i.verify_note}")
     else:
         lines += ["", "## 结论", "", "所有已报告问题均已完成修复或复审通过。"]
 
@@ -317,18 +345,42 @@ def _task_fix_group(file: str, group: list[Issue], rt: Runtime, base: str) -> st
     return "\n".join(lines)
 
 def _task_verify(patched: str, source: str, state: WorkflowState) -> str:
+    targets = [i for i in state.issues if i.file == source
+               and i.status == "fixed"]
     lines = [
         f"这是修复后的文件：{patched}",
         f"它对应原文件：{source}",
         "",
-        "请审查这个修复后的文件。重点确认以下原问题是否真的被解决了：",
+        f"请逐一判断下列 {len(targets)} 个原问题在修复后的文件里**是否真的解决了**：",
+        "",
     ]
-    lines += [f"- {i.short()}" for i in state.issues if i.file == source][:8]
+    for i in targets:
+        lines.append(f"- **{i.id}**（L{i.line_start}-{i.line_end}，{i.severity}）{i.title}")
+        lines.append(f"  原问题：{i.reason}")
     lines += [
         "",
-        "然后按同样的 JSON 输出规范，报告你在修复后文件里发现的所有问题。",
-        '如果原问题都已解决，返回 {"summary": "已修复", "issues": []}。',
-        "注意：请报告你真实读到的问题，不要因为「应该已经修好了」就返回空数组。",
+        "同时按审查规范报告你在这个修复后文件里发现的其他问题。",
+        "",
+        "只输出一个 ```json 代码块，结构如下：",
+        "",
+        "```json",
+        "{",
+        '  "verdicts": [',
+        '    {"id": "R-001", "resolved": true,',
+        '     "evidence": "L12 已改为 with open(...) as f，句柄会正确关闭"},',
+        '    {"id": "R-002", "resolved": false,',
+        '     "evidence": "L28 仍直接对 created_at 做 timedelta 相加，未见类型转换"}',
+        "  ],",
+        '  "issues": [ ...仍然存在的问题，字段同审查规范... ]',
+        "}",
+        "```",
+        "",
+        "判定规则：",
+        "- 必须对你读到的代码作出判断，`evidence` 要引用具体行号和改动",
+        "- `resolved: true` 表示原问题描述的情形已不存在",
+        "- **不要因为「可能已经修好了」就填 true**；也不要因为「代码风格不完全满意」就填 false",
+        "- 如果原问题只是被部分修复（例如加了日志但仍吞异常），填 false 并说明",
+        "- `issues` 里应该只放**新发现或仍存在**的问题，不要把已解决的问题重复列一遍",
     ]
     return "\n".join(lines)
 

@@ -207,3 +207,25 @@ def parse_issues(text: str, workspace: Path) -> tuple[list[Issue], list[str]]:
             line_verified=bool(raw.get("line_verified", False)),
         ))
     return issues, errors
+
+def parse_verdicts(text: str) -> dict[str, tuple[bool, str]]:
+    """解析 verify 的逐条判定。返回 {issue_id: (resolved, evidence)}"""
+    for obj in iter_json_objects(text):
+        if "verdicts" not in obj:
+            continue
+        raw = obj.get("verdicts")
+        if not isinstance(raw, list):
+            return {}
+        out: dict[str, tuple[bool, str]] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            iid = str(item.get("id") or "").strip()
+            if not iid:
+                continue
+            out[iid] = (
+                bool(item.get("resolved", False)),
+                str(item.get("evidence") or "").strip(),
+            )
+        return out
+    return {}
